@@ -15,6 +15,37 @@ app.use(express.json());
 
 // Database setup
 let db;
+
+// API Endpoints
+app.get('/api/levels', async (req, res) => {
+  if (!db) return res.status(503).send('Database not ready');
+  const levels = await db.all('SELECT * FROM levels');
+  res.json(levels);
+});
+
+app.post('/api/scores', async (req, res) => {
+  if (!db) return res.status(503).send('Database not ready');
+  const { level_id, player_name, time_ms } = req.body;
+  if (!level_id || !player_name || !time_ms) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+  await db.run(
+    'INSERT INTO scores (level_id, player_name, time_ms) VALUES (?, ?, ?)',
+    [level_id, player_name, time_ms]
+  );
+  res.json({ success: true });
+});
+
+app.get('/api/leaderboard/:levelId', async (req, res) => {
+  if (!db) return res.status(503).send('Database not ready');
+  const { levelId } = req.params;
+  const scores = await db.all(
+    'SELECT player_name, time_ms, created_at FROM scores WHERE level_id = ? ORDER BY time_ms ASC LIMIT 10',
+    [levelId]
+  );
+  res.json(scores);
+});
+
 (async () => {
   db = await open({
     filename: path.join(__dirname, 'database.sqlite'),
@@ -108,35 +139,11 @@ let db;
   }
 
   console.log('Database initialized.');
-})();
 
-// API Endpoints
-app.get('/api/levels', async (req, res) => {
-  const levels = await db.all('SELECT * FROM levels');
-  res.json(levels);
-});
-
-app.post('/api/scores', async (req, res) => {
-  const { level_id, player_name, time_ms } = req.body;
-  if (!level_id || !player_name || !time_ms) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-  await db.run(
-    'INSERT INTO scores (level_id, player_name, time_ms) VALUES (?, ?, ?)',
-    [level_id, player_name, time_ms]
-  );
-  res.json({ success: true });
-});
-
-app.get('/api/leaderboard/:levelId', async (req, res) => {
-  const { levelId } = req.params;
-  const scores = await db.all(
-    'SELECT player_name, time_ms, created_at FROM scores WHERE level_id = ? ORDER BY time_ms ASC LIMIT 10',
-    [levelId]
-  );
-  res.json(scores);
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+})().catch(err => {
+  console.error('Failed to initialize database:', err);
+  process.exit(1);
 });
