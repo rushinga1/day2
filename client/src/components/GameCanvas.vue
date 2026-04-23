@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { GameEngine } from '../engine/GameEngine';
+import TouchControls from './TouchControls.vue';
 
 const props = defineProps({
   level:       { type: Object,  required: true  },
@@ -26,6 +27,10 @@ const initEngine = () => {
   engine.start();
 };
 
+const handleTouchInput = ({ key, pressed }) => {
+  if (engine) engine.setKey(key, pressed);
+};
+
 onMounted(initEngine);
 onUnmounted(() => { if (engine) engine.stop(); });
 watch(() => [props.level, props.multiplayer], initEngine, { deep: false });
@@ -39,6 +44,8 @@ watch(() => [props.level, props.multiplayer], initEngine, { deep: false });
       height="450"
       class="game-canvas"
     ></canvas>
+    
+    <TouchControls @input="handleTouchInput" />
   </div>
 </template>
 

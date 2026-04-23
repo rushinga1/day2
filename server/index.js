@@ -4,8 +4,11 @@ import { open } from 'sqlite';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const JWT_SECRET = process.env.JWT_SECRET || 'mrdev-secret-123';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,7 +23,68 @@ app.get('/', (req, res) => {
 // Database setup
 let db;
 
+// Auth Middleware
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.sendStatus(401);
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+};
+
 // API Endpoints
+app.post('/api/auth/signup', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
+
+  try {
+    const existing = await db.get('SELECT id FROM users WHERE username = ?', [username]);
+    if (existing) return res.status(400).json({ error: 'Username taken' });
+
+    const hash = await bcrypt.hash(password, 10);
+    const result = await db.run(
+      'INSERT INTO users (username, password_hash) VALUES (?, ?)',
+      [username, hash]
+    );
+    
+    const token = jwt.sign({ id: result.lastID, username }, JWT_SECRET);
+    res.json({ token, username });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const user = await db.get('SELECT * FROM users WHERE username = ?', [username]);
+    if (!user) return res.status(400).json({ error: 'User not found' });
+
+    const match = await bcrypt.compare(password, user.password_hash);
+    if (!match) return res.status(400).json({ error: 'Wrong password' });
+
+    const token = jwt.sign({ id: user.id, username }, JWT_SECRET);
+    res.json({ token, username, progress: JSON.parse(user.progress_json || '{}') });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/progress', authenticateToken, async (req, res) => {
+  const user = await db.get('SELECT progress_json FROM users WHERE id = ?', [req.user.id]);
+  res.json(JSON.parse(user.progress_json || '{}'));
+});
+
+app.post('/api/progress', authenticateToken, async (req, res) => {
+  const { progress } = req.body;
+  await db.run('UPDATE users SET progress_json = ? WHERE id = ?', [JSON.stringify(progress), req.user.id]);
+  res.json({ success: true });
+});
+
 app.get('/api/levels', async (req, res) => {
   if (!db) return res.status(503).send('Database not ready');
   const levels = await db.all('SELECT * FROM levels');
@@ -57,6 +121,13 @@ app.get('/api/leaderboard/:levelId', async (req, res) => {
   });
 
   await db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE,
+      password_hash TEXT,
+      progress_json TEXT DEFAULT '{}'
+    );
+
     CREATE TABLE IF NOT EXISTS levels (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT,

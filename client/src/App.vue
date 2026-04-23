@@ -3,14 +3,19 @@ import { ref, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
 import GameCanvas from './components/GameCanvas.vue';
 import SplashScreen from './components/SplashScreen.vue';
+import AuthOverlay from './components/AuthOverlay.vue';
 import { generateLevel, getAllLevelMeta, WORLDS } from './engine/LevelGenerator.js';
-import { Trophy, Play, RefreshCw, Skull, Home, ChevronRight, Lock, Star, Moon, Sun } from 'lucide-vue-next';
+import { Trophy, Play, RefreshCw, Skull, Home, ChevronRight, Lock, Star, Moon, Sun, User as UserIcon, LogOut, Cloud } from 'lucide-vue-next';
 import confetti from 'canvas-confetti';
+
+const API_URL = import.meta.env.VITE_API_URL || 'https://mrdevgame-server-gnwr.onrender.com';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const showSplash  = ref(true);
 const screen      = ref('worlds');   // worlds | levels | stages | playing | won
 const playerName  = ref(localStorage.getItem('mrdev_name') || 'Player 1');
+const userToken   = ref(localStorage.getItem('mrdev_token') || null);
+const showAuth    = ref(false);
 
 const selectedWorld   = ref(null);
 const selectedLevel   = ref(null);
@@ -28,6 +33,44 @@ const p2Deaths    = ref(0);
 const apiOnline   = ref(false);
 
 const isLightMode = ref(localStorage.getItem('mrdev_theme') === 'light');
+
+// ── Authentication ────────────────────────────────────────────────────────────
+function handleAuthSuccess(data) {
+  userToken.value = data.token;
+  playerName.value = data.username;
+  localStorage.setItem('mrdev_token', data.token);
+  localStorage.setItem('mrdev_name', data.username);
+  
+  if (data.progress) {
+    // Merge server progress with local progress (keep best times)
+    Object.keys(data.progress).forEach(key => {
+      if (!progress.value[key] || data.progress[key] < progress.value[key]) {
+        progress.value[key] = data.progress[key];
+      }
+    });
+    localStorage.setItem('mrdev_progress', JSON.stringify(progress.value));
+  }
+  
+  showAuth.value = false;
+  syncProgressToServer();
+}
+
+function handleLogout() {
+  userToken.value = null;
+  localStorage.removeItem('mrdev_token');
+  // Optional: keep playerName or clear it
+}
+
+async function syncProgressToServer() {
+  if (!userToken.value) return;
+  try {
+    await axios.post(`${API_URL}/api/progress`, { progress: progress.value }, {
+      headers: { Authorization: `Bearer ${userToken.value}` }
+    });
+  } catch (err) { console.error('Sync failed', err); }
+}
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
 watch(isLightMode, (val) => {
   if (val) document.body.classList.add('light-theme');
   else document.body.classList.remove('light-theme');
@@ -66,7 +109,6 @@ const totalStages  = computed(() => 1000);
 
 function isLevelUnlocked(worldId, level) {
   if (level <= 1) return true;
-  // Previous level must have at least 1 stage cleared
   return stagesCleared(worldId, level - 1) > 0;
 }
 
@@ -77,7 +119,7 @@ function stagesCleared(worldId, level) {
 }
 
 function worldProgress(worldId) {
-  const total = 100; // 10 levels × 10 stages
+  const total = 100;
   const cleared = Object.keys(progress.value)
     .filter(k => k.startsWith(`${worldId}-`)).length;
   return Math.round((cleared / total) * 100);
@@ -123,10 +165,10 @@ async function onWin(playerNum) {
   screen.value = 'won';
   const key = `${selectedWorld.value.id}-${selectedLevel.value}-${selectedStage.value}`;
 
-  // Save best time locally
   if (!progress.value[key] || duration < progress.value[key]) {
     progress.value[key] = duration;
     localStorage.setItem('mrdev_progress', JSON.stringify(progress.value));
+    syncProgressToServer(); // Sync immediately on win
   }
 
   confetti({
@@ -135,7 +177,6 @@ async function onWin(playerNum) {
   });
 
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'https://mrdevgame-server-gnwr.onrender.com';
     await axios.post(`${API_URL}/api/scores`, {
       level_id:    `${selectedWorld.value.id}-${selectedLevel.value}`,
       player_name: multiplayer.value ? `P${winnerNum.value}: ${playerName.value}` : playerName.value,
@@ -181,9 +222,23 @@ function savePlayerName() {
 // ── Init ──────────────────────────────────────────────────────────────────────
 onMounted(async () => {
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'https://mrdevgame-server-gnwr.onrender.com';
     await axios.get(`${API_URL}/api/levels`, { timeout: 2000 });
     apiOnline.value = true;
+    
+    // If logged in, fetch cloud progress
+    if (userToken.value) {
+      const res = await axios.get(`${API_URL}/api/progress`, {
+        headers: { Authorization: `Bearer ${userToken.value}` }
+      });
+      if (res.data) {
+        Object.keys(res.data).forEach(key => {
+          if (!progress.value[key] || res.data[key] < progress.value[key]) {
+            progress.value[key] = res.data[key];
+          }
+        });
+        localStorage.setItem('mrdev_progress', JSON.stringify(progress.value));
+      }
+    }
   } catch { apiOnline.value = false; }
 });
 </script>
@@ -208,9 +263,24 @@ onMounted(async () => {
         <div class="progress-pill">
           <Star :size="14" /> {{ totalCleared }} / {{ totalStages }}
         </div>
+        
+        <button v-if="!userToken" class="auth-btn" @click="showAuth = true">
+          <UserIcon :size="16" /> <span>Sync</span>
+        </button>
+        <button v-else class="auth-btn logged-in" @click="handleLogout" title="Logout">
+          <Cloud :size="16" class="cloud-icon" /> <span>{{ playerName }}</span>
+        </button>
+
         <div v-if="!apiOnline" class="offline-dot" title="Backend offline — progress saved locally">⚫</div>
       </div>
     </header>
+
+    <AuthOverlay 
+      v-if="showAuth" 
+      :api-url="API_URL" 
+      @auth-success="handleAuthSuccess" 
+      @close="showAuth = false" 
+    />
 
     <!-- ── World Map ──────────────────────────────────────────────────────── -->
     <main v-if="screen === 'worlds'" class="screen">
@@ -449,6 +519,46 @@ html, body {
 }
 .icon-btn:hover { background: var(--bg); filter: brightness(0.9); }
 body:not(.light-theme) .icon-btn:hover { filter: brightness(1.2); }
+
+.auth-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.auth-btn:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: white;
+}
+
+.auth-btn.logged-in {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.auth-btn.logged-in:hover {
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.cloud-icon {
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
 
 /* ── Screens ─────────────────────────────────────────────────────────────── */
 .screen {
@@ -705,4 +815,70 @@ body:not(.light-theme) .mp-toggle:hover { filter: brightness(1.2); }
 /* ── Splash transition ──────────────────────────────────────────────────── */
 .fade-leave-active { transition: opacity 0.6s ease, transform 0.6s ease; }
 .fade-leave-to     { opacity: 0; transform: scale(1.04); }
+
+/* ── Mobile Responsiveness ──────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .topbar {
+    padding: 10px 16px;
+  }
+  
+  .logo { font-size: 1.2rem; }
+  .auth-btn span { display: none; }
+  .auth-btn { padding: 8px; }
+  
+  .screen { padding: 20px 16px 120px; }
+  .screen-header h2 { font-size: 1.5rem; }
+  
+  .world-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  
+  .level-grid {
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  }
+  
+  .stage-grid {
+    grid-template-columns: repeat(auto-fill, minmax(65px, 1fr));
+  }
+  
+  .game-hud {
+    font-size: 0.8rem;
+  }
+  
+  .game-screen {
+    padding: 8px;
+  }
+  
+  .canvas-wrap {
+    border-radius: 10px;
+    border-width: 1px;
+  }
+  
+  .win-card {
+    padding: 32px 24px;
+    margin: 16px;
+  }
+  
+  .win-stats {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .stat-box {
+    padding: 12px;
+  }
+  
+  .stat-value { font-size: 1.3rem; }
+}
+
+@media (max-width: 480px) {
+  .level-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+  
+  .stage-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
 </style>

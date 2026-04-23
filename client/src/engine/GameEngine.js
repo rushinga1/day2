@@ -49,6 +49,11 @@ export class GameEngine {
     this._lastTime = performance.now();
   }
 
+  setKey(code, isPressed) {
+    if (isPressed) this.keys[code] = true;
+    else delete this.keys[code];
+  }
+
   _freshPlayer(num) {
     const H = this.canvas.height;
     return {
