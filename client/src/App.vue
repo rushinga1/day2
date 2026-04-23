@@ -135,7 +135,8 @@ async function onWin(playerNum) {
   });
 
   try {
-    await axios.post('http://localhost:3000/api/scores', {
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    await axios.post(`${API_URL}/api/scores`, {
       level_id:    `${selectedWorld.value.id}-${selectedLevel.value}`,
       player_name: multiplayer.value ? `P${winnerNum.value}: ${playerName.value}` : playerName.value,
       time_ms:     duration
@@ -180,7 +181,8 @@ function savePlayerName() {
 // ── Init ──────────────────────────────────────────────────────────────────────
 onMounted(async () => {
   try {
-    await axios.get('http://localhost:3000/api/levels', { timeout: 2000 });
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    await axios.get(`${API_URL}/api/levels`, { timeout: 2000 });
     apiOnline.value = true;
   } catch { apiOnline.value = false; }
 });
