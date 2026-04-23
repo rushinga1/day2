@@ -135,7 +135,7 @@ async function onWin(playerNum) {
   });
 
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    const API_URL = import.meta.env.VITE_API_URL || 'https://mrdevgame-server-gnwr.onrender.com';
     await axios.post(`${API_URL}/api/scores`, {
       level_id:    `${selectedWorld.value.id}-${selectedLevel.value}`,
       player_name: multiplayer.value ? `P${winnerNum.value}: ${playerName.value}` : playerName.value,
@@ -181,7 +181,7 @@ function savePlayerName() {
 // ── Init ──────────────────────────────────────────────────────────────────────
 onMounted(async () => {
   try {
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    const API_URL = import.meta.env.VITE_API_URL || 'https://mrdevgame-server-gnwr.onrender.com';
     await axios.get(`${API_URL}/api/levels`, { timeout: 2000 });
     apiOnline.value = true;
   } catch { apiOnline.value = false; }
