@@ -6,11 +6,21 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const JWT_SECRET = process.env.JWT_SECRET || 'mrdev-secret-123';
 
 const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
@@ -22,6 +32,61 @@ app.get('/', (req, res) => {
 
 // Database setup
 let db;
+
+// Socket.io Room Logic
+const rooms = new Map();
+
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
+
+  socket.on('join-room', ({ roomId, playerName }) => {
+    socket.join(roomId);
+    
+    if (!rooms.has(roomId)) {
+      rooms.set(roomId, { players: [] });
+    }
+    
+    const room = rooms.get(roomId);
+    const playerNum = room.players.length + 1;
+    
+    if (playerNum > 2) {
+      socket.emit('room-full');
+      return;
+    }
+
+    const playerData = { id: socket.id, name: playerName, num: playerNum };
+    room.players.push(playerData);
+    
+    socket.emit('player-assigned', playerNum);
+    io.to(roomId).emit('room-update', room.players);
+    
+    console.log(`Player ${playerName} joined room ${roomId} as P${playerNum}`);
+  });
+
+  socket.on('player-update', ({ roomId, playerNum, x, y, boosted }) => {
+    socket.to(roomId).emit('opponent-update', { playerNum, x, y, boosted });
+  });
+
+  socket.on('player-die', ({ roomId, playerNum }) => {
+    io.to(roomId).emit('opponent-die', playerNum);
+  });
+
+  socket.on('player-win', ({ roomId, playerNum, playerName }) => {
+    io.to(roomId).emit('game-over', { winnerNum: playerNum, winnerName: playerName });
+  });
+
+  socket.on('disconnect', () => {
+    rooms.forEach((room, roomId) => {
+      const index = room.players.findIndex(p => p.id === socket.id);
+      if (index !== -1) {
+        room.players.splice(index, 1);
+        io.to(roomId).emit('room-update', room.players);
+        if (room.players.length === 0) rooms.delete(roomId);
+      }
+    });
+    console.log('User disconnected:', socket.id);
+  });
+});
 
 // Auth Middleware
 const authenticateToken = (req, res, next) => {
@@ -215,7 +280,7 @@ app.get('/api/leaderboard/:levelId', async (req, res) => {
 
   console.log('Database initialized.');
 
-  app.listen(PORT, () => {
+  httpServer.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 })().catch(err => {

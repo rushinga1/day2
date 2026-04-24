@@ -1,29 +1,73 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { io } from 'socket.io-client';
 import { GameEngine } from '../engine/GameEngine';
 import TouchControls from './TouchControls.vue';
 
 const props = defineProps({
-  level:       { type: Object,  required: true  },
-  multiplayer: { type: Boolean, default: false  }
+  level:           { type: Object,  required: true  },
+  multiplayer:     { type: Boolean, default: false  },
+  isNetworkGame:   { type: Boolean, default: false  },
+  roomId:          { type: String,  default: ''     },
+  playerName:      { type: String,  default: 'Player' }
 });
-const emit = defineEmits(['win', 'die']);
+const emit = defineEmits(['win', 'die', 'room-full']);
 
 const canvasRef = ref(null);
+const localPlayerNum = ref(1);
 let engine = null;
+let socket = null;
+
+const API_URL = import.meta.env.VITE_API_URL || 'https://mrdevgame-server-gnwr.onrender.com';
 
 const initEngine = () => {
   if (engine) engine.stop();
   if (!canvasRef.value || !props.level?.config) return;
+
+  if (props.isNetworkGame && !socket) {
+    socket = io(API_URL);
+    socket.emit('join-room', { roomId: props.roomId, playerName: props.playerName });
+    
+    socket.on('player-assigned', (num) => { localPlayerNum.value = num; });
+    socket.on('room-full', () => { emit('room-full'); });
+    socket.on('opponent-update', (data) => { if (engine) engine.updateRemotePlayer(data); });
+    socket.on('opponent-die', (num) => { if (engine) engine._respawn(num === 1 ? engine.p1 : engine.p2); });
+    socket.on('game-over', ({ winnerNum }) => { if (engine) engine._win(winnerNum); });
+  }
 
   const cfg = {
     ...props.level.config,
     worldTheme: props.level.worldTheme || null
   };
 
-  engine = new GameEngine(canvasRef.value, cfg, props.multiplayer);
-  engine.onWin = (winnerNum) => emit('win', winnerNum);
-  engine.onDie = (playerNum) => emit('die', playerNum);
+  engine = new GameEngine(
+    canvasRef.value, 
+    cfg, 
+    props.multiplayer || props.isNetworkGame, 
+    localPlayerNum.value, 
+    props.isNetworkGame
+  );
+
+  engine.onWin = (winnerNum) => {
+    emit('win', winnerNum);
+    if (props.isNetworkGame && socket) {
+      socket.emit('player-win', { roomId: props.roomId, playerNum: winnerNum, playerName: props.playerName });
+    }
+  };
+
+  engine.onDie = (playerNum) => {
+    emit('die', playerNum);
+    if (props.isNetworkGame && socket && playerNum === localPlayerNum.value) {
+      socket.emit('player-die', { roomId: props.roomId, playerNum });
+    }
+  };
+
+  engine.onPlayerUpdate = (data) => {
+    if (props.isNetworkGame && socket) {
+      socket.emit('player-update', { roomId: props.roomId, ...data });
+    }
+  };
+
   engine.start();
 };
 
@@ -32,7 +76,10 @@ const handleTouchInput = ({ key, pressed }) => {
 };
 
 onMounted(initEngine);
-onUnmounted(() => { if (engine) engine.stop(); });
+onUnmounted(() => { 
+  if (engine) engine.stop(); 
+  if (socket) socket.disconnect();
+});
 watch(() => [props.level, props.multiplayer], initEngine, { deep: false });
 </script>
 

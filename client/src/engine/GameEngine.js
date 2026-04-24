@@ -1,9 +1,11 @@
 export class GameEngine {
-  constructor(canvas, config, multiplayer = false) {
-    this.canvas      = canvas;
-    this.ctx         = canvas.getContext('2d');
-    this.config      = config || {};
-    this.multiplayer = multiplayer;
+  constructor(canvas, config, multiplayer = false, localPlayerNum = 1, isNetworkGame = false) {
+    this.canvas          = canvas;
+    this.ctx             = canvas.getContext('2d');
+    this.config          = config || {};
+    this.multiplayer     = multiplayer;
+    this.localPlayerNum  = localPlayerNum;
+    this.isNetworkGame   = isNetworkGame;
 
     this.gravity   = this.config.gravity ?? 0.5;
     this.speed     = this.config.speed   ?? 5;
@@ -115,31 +117,69 @@ export class GameEngine {
 
   // ── Update ──────────────────────────────────────────────────────────────────
   _update(delta) {
-    // Player 1 (W/A/D)
-    this._updatePlayer(this.p1, {
-      left:  ['KeyA'],
-      right: ['KeyD'],
-      jump:  ['KeyW', 'Space'],
-    }, delta);
+    // Determine which player is local vs remote
+    const isP1Local = !this.isNetworkGame || this.localPlayerNum === 1;
+    const isP2Local = !this.isNetworkGame || this.localPlayerNum === 2;
 
-    // Player 2 (Arrow keys) – multiplayer only
-    if (this.multiplayer && this.p2) {
-      this._updatePlayer(this.p2, {
-        left:  ['ArrowLeft'],
-        right: ['ArrowRight'],
-        jump:  ['ArrowUp'],
+    // Player 1
+    if (isP1Local) {
+      this._updatePlayer(this.p1, {
+        left:  ['KeyA'],
+        right: ['KeyD'],
+        jump:  ['KeyW', 'Space'],
       }, delta);
+      
+      if (this.isNetworkGame && this.onPlayerUpdate) {
+        this.onPlayerUpdate({ playerNum: 1, x: this.p1.x, y: this.p1.y, boosted: this.p1.boosted });
+      }
     }
 
-    // Moving exit (troll)
-    const near = Math.abs(this.p1.x - this.exit.x) < 160 ||
-      (this.multiplayer && this.p2 && Math.abs(this.p2.x - this.exit.x) < 160);
-    if (this.exit.type === 'troll' && near) {
-      this.exit.x = Math.min(this.exit.x + 6, this.canvas.width - this.exit.width - 10);
+    // Player 2
+    if (this.multiplayer && this.p2) {
+      if (isP2Local) {
+        this._updatePlayer(this.p2, {
+          left:  ['ArrowLeft'],
+          right: ['ArrowRight'],
+          jump:  ['ArrowUp'],
+        }, delta);
+
+        if (this.isNetworkGame && this.onPlayerUpdate) {
+          this.onPlayerUpdate({ playerNum: 2, x: this.p2.x, y: this.p2.y, boosted: this.p2.boosted });
+        }
+      }
     }
 
-    // Booster logic
-    this._updateBooster(delta);
+    // Moving exit (troll) - Only host (P1) calculates troll movement in network games
+    if (!this.isNetworkGame || this.localPlayerNum === 1) {
+      const near = Math.abs(this.p1.x - this.exit.x) < 160 ||
+        (this.multiplayer && this.p2 && Math.abs(this.p2.x - this.exit.x) < 160);
+      if (this.exit.x < this.canvas.width - this.exit.width - 20) { // Safety bound
+         if (this.exit.type === 'troll' && near) {
+            this.exit.x = Math.min(this.exit.x + 6, this.canvas.width - this.exit.width - 10);
+            if (this.isNetworkGame && this.onPlayerUpdate) {
+               this.onPlayerUpdate({ trollX: this.exit.x });
+            }
+         }
+      }
+    }
+
+    // Booster logic - Only host (P1) calculates booster in network games
+    if (!this.isNetworkGame || this.localPlayerNum === 1) {
+      this._updateBooster(delta);
+    }
+  }
+
+  updateRemotePlayer(data) {
+    if (data.trollX !== undefined) this.exit.x = data.trollX;
+    if (data.playerNum === 1 && this.localPlayerNum !== 1) {
+      this.p1.x = data.x;
+      this.p1.y = data.y;
+      this.p1.boosted = data.boosted;
+    } else if (data.playerNum === 2 && this.localPlayerNum !== 2) {
+      this.p2.x = data.x;
+      this.p2.y = data.y;
+      this.p2.boosted = data.boosted;
+    }
   }
 
   _updatePlayer(p, keys, delta) {

@@ -21,8 +21,10 @@ const selectedWorld   = ref(null);
 const selectedLevel   = ref(null);
 const selectedStage   = ref(null);
 const currentLevelObj = ref(null);
-const multiplayer     = ref(false);   // 1P or 2P mode
-const winnerNum       = ref(null);    // 1 or 2 in multiplayer
+const multiplayer     = ref(false);   // local 2P
+const isNetworkGame   = ref(false);   // online 2P
+const roomId          = ref('');
+const winnerNum       = ref(null);    // 1 or 2
 
 // Progress: key = "W-L-S", value = best time in ms
 const progress = ref(JSON.parse(localStorage.getItem('mrdev_progress') || '{}'));
@@ -146,6 +148,25 @@ function selectStage(meta) {
   p1Deaths.value = 0;
   p2Deaths.value = 0;
   winnerNum.value = null;
+}
+
+function startOnlineGame(rid) {
+  if (!rid) return;
+  roomId.value = rid;
+  isNetworkGame.value = true;
+  multiplayer.value = false; // Disable local 2P
+  
+  // Start at world 1, level 1, stage 1 for simplicity or let host choose
+  selectedWorld.value = WORLDS[0];
+  selectedLevel.value = 1;
+  selectedStage.value = 1;
+  currentLevelObj.value = generateLevel(1, 1, 1);
+  screen.value = 'playing';
+}
+
+function onRoomFull() {
+  alert('Room is full!');
+  goHome();
 }
 
 function goHome() { screen.value = 'worlds'; }
@@ -303,6 +324,15 @@ onMounted(async () => {
             {{ isLightMode ? '🌙 Dark Mode' : '☀️ Light Mode' }}
           </button>
         </div>
+
+        <div class="online-rooms">
+          <h3>🔗 Play with Friends</h3>
+          <div class="room-actions">
+            <input v-model="roomId" type="text" placeholder="Room ID" />
+            <button @click="startOnlineGame(roomId)">Join Room</button>
+            <button @click="startOnlineGame(Math.random().toString(36).substring(7))">Create New Room</button>
+          </div>
+        </div>
       </div>
       <div class="world-grid">
         <div
@@ -378,28 +408,36 @@ onMounted(async () => {
           <span class="p1-tag">P1</span>
           <Skull :size="14" />
           <span>{{ p1Deaths }}</span>
-          <template v-if="multiplayer">
+          <template v-if="multiplayer || isNetworkGame">
             &nbsp;|&nbsp;
             <span class="p2-tag">P2</span>
             <Skull :size="14" />
             <span>{{ p2Deaths }}</span>
           </template>
         </div>
-        <div class="hud-center">{{ currentLevelObj.name }}</div>
+        <div class="hud-center">
+          {{ currentLevelObj.name }}
+          <div v-if="isNetworkGame" class="room-id-badge">Room: {{ roomId }}</div>
+        </div>
         <div class="hud-right">
-          <span v-if="multiplayer" class="mp-badge">👥 2P</span>
-          <button class="icon-btn" @click="goStages" title="Exit level">
+          <span v-if="multiplayer" class="mp-badge">👥 Local 2P</span>
+          <span v-if="isNetworkGame" class="mp-badge">🌐 Online</span>
+          <button class="icon-btn" @click="goHome" title="Exit level">
             <RefreshCw :size="18" />
           </button>
         </div>
       </div>
 
       <GameCanvas
-        :key="currentLevelObj.id + '-' + multiplayer"
+        :key="currentLevelObj.id + '-' + multiplayer + '-' + isNetworkGame"
         :level="currentLevelObj"
         :multiplayer="multiplayer"
+        :isNetworkGame="isNetworkGame"
+        :roomId="roomId"
+        :playerName="playerName"
         @win="onWin"
         @die="onDie"
+        @room-full="onRoomFull"
       />
 
       <p class="hint">A/D or ← → to move &nbsp;|&nbsp; W / Space / ↑ to jump &nbsp;|&nbsp; reach the glowing door!</p>
@@ -796,6 +834,55 @@ body:not(.light-theme) .mp-toggle:hover { filter: brightness(1.2); }
   background: rgba(249,115,22,.2);
   border: 2px solid rgba(249,115,22,.5);
   color: #fdba74;
+}
+
+/* ── Online Rooms ────────────────────────────────────────────────────────── */
+.online-rooms {
+  margin-top: 24px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  text-align: center;
+}
+.online-rooms h3 {
+  font-size: 1.2rem;
+  margin-bottom: 16px;
+}
+.room-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.room-actions input {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+}
+.room-actions button {
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: none;
+  background: var(--primary);
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter 0.2s;
+}
+.room-actions button:hover {
+  filter: brightness(1.1);
+}
+.room-id-badge {
+  font-size: 0.75rem;
+  background: rgba(255,255,255,0.1);
+  padding: 2px 8px;
+  border-radius: 12px;
+  margin-top: 4px;
+  display: inline-block;
 }
 
 /* ── Controls hint ───────────────────────────────────────────────────────── */
